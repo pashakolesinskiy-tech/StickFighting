@@ -53,6 +53,7 @@ export default function App() {
   const engineRef = useRef<FightEngine | null>(null);
   const resumeAfterModal = useRef(false);
   const onlineRef = useRef<OnlineGame | null>(null);
+  const qrHandledRef = useRef(false);
   const configRef = useRef(config);
   const screenRef = useRef(screen);
   const settingsRef = useRef(settings);
@@ -131,7 +132,7 @@ export default function App() {
   }, [disposeOnline]);
 
   /** The player chose to host or to join: a new network game (and its connection) begins. */
-  const chooseRole = useCallback((role: 'host' | 'guest') => {
+  const chooseRole = useCallback((role: 'host' | 'guest', autoJoinCode?: string) => {
     const engine = engineRef.current;
     if (!engine) return;
     engine.audio.unlock(); engine.audio.play('click');
@@ -150,7 +151,24 @@ export default function App() {
     } catch { setToast('Не удалось начать сетевую игру в этом браузере.'); return; }
     onlineRef.current = game; setOnline(game.view);
     if (role === 'host') void game.begin();
+    else if (autoJoinCode) void game.join(autoJoinCode);
   }, []);
+
+  // Автоматический вход в лобби при переходе по QR-коду (?join=...)
+  useEffect(() => {
+    if (qrHandledRef.current || !engineRef.current) return;
+    const params = new URLSearchParams(window.location.search);
+    const joinCode = params.get('join')?.trim();
+    if (!joinCode) return;
+
+    qrHandledRef.current = true;
+    const cleanUrl = window.location.pathname + window.location.hash;
+    window.history.replaceState({}, document.title, cleanUrl);
+
+    window.scrollTo(0, 0);
+    setScreen('online');
+    chooseRole('guest', joinCode);
+  }, [chooseRole]);
 
   const startMatch = useCallback(() => {
     const engine = engineRef.current;
