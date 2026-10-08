@@ -107,11 +107,11 @@ export function Kbd({ children, className = '' }: { children: ReactNode; classNa
   return <kbd className={className}>{children}</kbd>;
 }
 
-function HealthSide({ fighter, enemy = false }: { fighter: FighterSnapshot; enemy?: boolean }) {
+function HealthSide({ fighter, enemy = false, you = false }: { fighter: FighterSnapshot; enemy?: boolean; you?: boolean }) {
   const definition = FIGHTERS[fighter.id];
   return <div className={`hud-side ${enemy ? 'enemy' : 'player'}`} style={{ '--fighter-color': definition.color } as CSSProperties}>
     <div className="fighter-heading">
-      <span className="fighter-name">{definition.name}</span>
+      <span className="fighter-name">{definition.name}{you && <span className="you-tag">ТЫ</span>}</span>
       <span className="round-points" aria-label={`Выиграно раундов: ${fighter.wins}`}>
         {[0, 1].map(i => <span key={i} className={`win-point ${fighter.wins > i ? 'won' : ''}`} />)}
       </span>
@@ -128,16 +128,17 @@ function HealthSide({ fighter, enemy = false }: { fighter: FighterSnapshot; enem
   </div>;
 }
 
-export function HUD({ snapshot }: { snapshot: Snapshot }) {
+/** `you` is the index of the fighter controlled from this device in a network match (0 = left, 1 = right). */
+export function HUD({ snapshot, you = null }: { snapshot: Snapshot; you?: 0 | 1 | null }) {
   return <>
     <div className="battle-hud">
-      <HealthSide fighter={snapshot.player} />
+      <HealthSide fighter={snapshot.player} you={you === 0} />
       <div className={`timer-center ${snapshot.timer <= 10 ? 'time-low' : ''}`}>
         <span className="round-caption">РАУНД {snapshot.round}</span>
         <PixelWord text={String(snapshot.timer).padStart(2, '0')} />
         <span className="first-to-two">ДО ДВУХ ПОБЕД</span>
       </div>
-      <HealthSide fighter={snapshot.enemy} enemy />
+      <HealthSide fighter={snapshot.enemy} enemy you={you === 1} />
     </div>
     {snapshot.player.combo >= 2 && snapshot.phase === 'fight' && <div key={`p-${snapshot.player.combo}`} className="combo-display player-combo"><strong>КОМБО <span>×{snapshot.player.combo}</span></strong><small>{snapshot.player.comboDamage} урона</small></div>}
     {snapshot.enemy.combo >= 2 && snapshot.phase === 'fight' && <div key={`e-${snapshot.enemy.combo}`} className="combo-display enemy-combo"><strong>КОМБО <span>×{snapshot.enemy.combo}</span></strong><small>{snapshot.enemy.comboDamage} урона</small></div>}
