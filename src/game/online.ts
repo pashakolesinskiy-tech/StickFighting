@@ -1,42 +1,26 @@
 import type { FightEngine } from './engine';
-import { NetSession, SignalError, type LinkStatus } from './net';
+import { isManualSignalCode, NetSession, SignalError, type LinkStatus } from './net';
 import { ARENA_IDS, FIGHTER_IDS, PROTOCOL_VERSION, type CtlMsg, type FastMsg, type LobbyState } from './protocol';
 import type { MatchConfig } from './types';
-
-/**
- * One network game: the glue between the connection (net.ts), the lobby and the engine.
- *
- * The host is authoritative: it runs the match, the guest only sends its input and draws the host's state.
- * Everything the interface needs is published as one immutable `OnlineView`.
- */
 
 export interface OnlineView {
   role: 'host' | 'guest';
   link: LinkStatus;
-  /** Why the link failed or closed. */
   detail: string;
-  /** Problem with a pasted code (the link itself is still usable). */
   error: string;
-  /** Host: code to give to the friend. Guest: answer code to send back. */
+  /** Host: 6-char room code (or manual offer code). Guest: empty in auto mode, or answer code in manual mode. */
   code: string;
-  /** The code is being created or a pasted code is being processed. */
   busy: boolean;
   lobby: LobbyState;
-  /** Round-trip time in ms, 0 until measured. */
   rtt: number;
-  /** No data from the peer for a while during a match. */
   stalled: boolean;
-  /** The friend left or the connection was lost after it had been established. */
   ended: boolean;
-  /** Guest: a rematch was requested. Host: the guest asks for one. */
   rematch: boolean;
 }
 
 export interface OnlineCallbacks {
   view(view: OnlineView): void;
-  /** A match begins (host pressed "fight" or asked for a rematch). */
   start(config: MatchConfig): void;
-  /** Both players go back to the lobby. */
   lobby(): void;
 }
 
@@ -91,25 +75,29 @@ export class OnlineGame {
 
   // ---- Connecting ----------------------------------------------------------------------------
 
-  /** Host: create a game and its code. Can be repeated to start over with a new code. */
+  /** Host: create a room with a 6-char code and QR code. */
   begin() {
     return this.guard(async () => {
       this.update({ code: '', link: 'gathering', ended: false });
-      const code = await this.fresh().createOffer();
+      const code = await this.fresh().createRoom();
       this.update({ code });
     });
   }
 
-  /** Guest: take the host's code and produce the answer code. */
+  /** Guest: join by 6-char room code / QR link, or accept a manual SF1-O-... offer code. */
   join(code: string) {
     return this.guard(async () => {
       this.update({ code: '', ended: false });
-      const answer = await this.fresh().acceptOffer(code);
-      this.update({ code: answer });
+      if (isManualSignalCode(code)) {
+        const answer = await this.fresh().acceptOffer(code);
+        this.update({ code: answer });
+      } else {
+        await this.fresh().joinRoom(code);
+      }
     });
   }
 
-  /** Host: take the guest's answer code. */
+  /** Host: accept a manual answer code (used only in offline manual mode). */
   accept(code: string) {
     return this.guard(async () => {
       if (!this.net) throw new SignalError('Сначала создайте игру.');
@@ -191,7 +179,6 @@ export class OnlineGame {
     this.broadcastLobby({ ...lobby, guest: fighter as LobbyState['guest'] });
   }
 
-  /** Pick the fighter of this device. A fighter taken by the other player cannot be chosen. */
   pickFighter(fighter: LobbyState['host']) {
     const lobby = this.view.lobby;
     if (this.role === 'host') {
@@ -210,7 +197,6 @@ export class OnlineGame {
     this.cb.lobby();
   }
 
-  /** Both players return to the lobby (to change fighter or arena). */
   backToLobby() {
     this.net?.sendCtl({ t: 'toLobby' });
     this.enterLobby();
@@ -218,7 +204,6 @@ export class OnlineGame {
 
   // ---- Match ---------------------------------------------------------------------------------
 
-  /** Host: start a match (or a rematch) with the lobby's settings. */
   startMatch() {
     if (this.role !== 'host' || !this.net?.isOpen) return;
     const config = lobbyConfig(this.view.lobby);
@@ -243,13 +228,11 @@ export class OnlineGame {
     this.cb.start(config);
   }
 
-  /** Rematch: the host starts at once, the guest asks the host. */
   requestRematch() {
     if (this.role === 'host') this.startMatch();
     else if (!this.view.rematch) { this.net?.sendCtl({ t: 'rematch' }); this.update({ rematch: true }); }
   }
 
-  /** Pause is shared: either player may pause or resume, the host applies it. */
   setPaused(paused: boolean) {
     if (this.role === 'host') this.engine.pause(paused);
     else this.net?.sendCtl({ t: 'pause', v: paused });
@@ -265,7 +248,6 @@ export class OnlineGame {
     if (stalled !== this.view.stalled) this.update({ stalled });
   }
 
-  /** Leave the network game and free everything. */
   dispose() {
     this.disposed = true;
     window.clearInterval(this.stallTimer);
